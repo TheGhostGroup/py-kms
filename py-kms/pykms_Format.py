@@ -1,36 +1,22 @@
 #!/usr/bin/env python3
 
-from __future__ import print_function, unicode_literals
 import re
 import sys
 import os
 from collections import OrderedDict
+import logging
+from io import StringIO
+import queue as Queue
 
-try:
-    # Python 2.x imports
-    from StringIO import StringIO
-    import Queue as Queue
-except ImportError:
-    # Python 3.x imports
-    from io import StringIO
-    import queue as Queue
-
-pyver = sys.version_info[:2]
 #----------------------------------------------------------------------------------------------------------------------------------------------------------
 
 def enco(strg, typ = 'latin-1'):
-    if pyver >= (3, 0):
-        if isinstance(strg, str):
-            return strg.encode(typ)
-    else:
-            return strg
+    if isinstance(strg, str):
+        return strg.encode(typ)
 
 def deco(strg, typ = 'latin-1'):
-    if pyver >= (3, 0):
-        if isinstance(strg, bytes):
-            return strg.decode(typ)
-    else:
-            return strg
+    if isinstance(strg, bytes):
+        return strg.decode(typ)
             
 def byterize(obj):
     
@@ -42,11 +28,10 @@ def byterize(obj):
             for subkey in subdictio:
                 do_encode(subdictio, subkey)
 
-    if pyver >= (3, 0):
-        objdict = obj.__dict__['fields']
-        for field in objdict:
-            do_encode(objdict, field)
-            
+    objdict = obj.__dict__['fields']
+    for field in objdict:
+        do_encode(objdict, field)
+
     return obj
 
 
@@ -69,14 +54,15 @@ def justify(astring, indent = 35, break_every = 100):
     return justy
 
 ##----------------------------------------------------------------------------------------------------------------------------------------------------
-ColorMap = {'gray'       : '\x1b[90m',
+ColorMap = {'black'      : '\x1b[90m',
             'red'        : '\x1b[91m',
-            'green'      : '\x1b[92m',
+            'green'      : '\x1b[38;2;0;238;118m', # '\x1b[92m'
             'yellow'     : '\x1b[93m',
             'blue'       : '\x1b[94m',
-            'magenta'    : '\x1b[95m',
+            'magenta'    : '\x1b[38;2;205;0;205m', # '\x1b[95m'
             'cyan'       : '\x1b[96m',
-            'white'      : '\x1b[97m'
+            'white'      : '\x1b[97m',
+            'orange'     : '\x1b[38;2;255;165;0m'
             }
 
 ExtraMap = {'end'        : '\x1b[0m',
@@ -184,24 +170,15 @@ def unshell_message(ansi_string, count):
     return msgcolored, count
 
 #-------------------------------------------------------------------------------------------------------------------------------------------------------
-# https://stackoverflow.com/questions/230751/how-to-flush-output-of-print-function
-if pyver < (3, 3):
-    old_print = print
-    
-    def print(*args, **kwargs):
-        flush = kwargs.pop('flush', False)
-        old_print(*args, **kwargs)
-        if flush:
-            file = kwargs.get('file', sys.stdout)
-            file.flush() if file is not None else sys.stdout.flush()
+# based on: https://ryanjoneil.github.io/posts/2014-02-14-capturing-stdout-in-a-python-child-process.html
+queue_print = Queue.Queue()
 
-# based on: https://ryanjoneil.github.io/posts/2014-02-14-capturing-stdout-in-a-python-child-process.html,
-# but not using threading/multiprocessing so:
-# 1) message visualization order preserved.
-# 2) newlines_count function output not wrong.
 class ShellMessage(object):
-    view = True
-    count, remain, numlist = (0, 0, [])
+    viewsrv, viewclt = (True for _ in range(2))
+    asyncmsgsrv, asyncmsgclt = (False for _ in range(2))
+    indx, count, remain, numlist, dummy = (0, 0, 0, [], False)
+    loggersrv_pty = logging.getLogger('logsrvpty')
+    loggerclt_pty = logging.getLogger('logcltpty')
 
     class Collect(StringIO):
         # Capture string sent to stdout.
@@ -215,8 +192,9 @@ class ShellMessage(object):
             self.put_text = put_text
             self.where = where
             self.plaintext = []
-            self.path = os.path.dirname(os.path.abspath( __file__ )) + '/pykms_newlines.txt'
-            self.print_queue = Queue.Queue()
+            self.path_nl = os.path.dirname(os.path.abspath( __file__ )) + '/pykms_newlines.txt'
+            self.path_clean_nl = os.path.dirname(os.path.abspath( __file__ )) + '/pykms_clean_newlines.txt'
+            self.queue_get = Queue.Queue()
 
         def formatter(self, msgtofrmt):
             if self.newlines:
@@ -236,14 +214,14 @@ class ShellMessage(object):
 
         def newlines_file(self, mode, *args):
             try:
-                with open(self.path, mode) as file:
+                with open(self.path_nl, mode) as file:
                     if mode in ['w', 'a']:
                         file.write(args[0])
                     elif mode == 'r':
                         data = [int(i) for i in [line.rstrip('\n') for line in file.readlines()]]
                         self.newlines, ShellMessage.remain = data[0], sum(data[1:])
             except:
-                with open(self.path, 'w') as file:
+                with open(self.path_nl, 'w') as file:
                         pass
 
         def newlines_count(self, num):
@@ -265,40 +243,114 @@ class ShellMessage(object):
                     self.continuecount = True
                 elif num in [-2 ,-4]:
                     self.newlines_file('r')
-            if num == 21:
-                ShellMessage.count, ShellMessage.remain, ShellMessage.numlist = (0, 0, [])
-                os.remove(self.path)
 
-        def run(self):
-            # view = False part.
-            if not ShellMessage.view:
-                if self.get_text:
-                    self.newlines = 0
-                    if self.put_text is not None:
-                        for msg in self.put_text:
-                            self.formatter(msg)
-                    else:
-                        for num in self.nshell:
-                            self.formatter(MsgMap[num])
-                    return self.plaintext
+            self.newlines_clean(num)
+
+        def newlines_clean(self, num):
+            if num == 0:
+                with open(self.path_clean_nl, 'w') as file:
+                    file.write('clean newlines')
+            try:
+                with open(self.path_clean_nl, 'r') as file:
+                    some = file.read()
+                if num == 21:
+                    ShellMessage.count, ShellMessage.remain, ShellMessage.numlist, ShellMessage.dummy = (0, 0, [], False)
+                    os.remove(self.path_nl)
+                    os.remove(self.path_clean_nl)
+            except:
+                if num == 19:
+                    ShellMessage.count, ShellMessage.remain, ShellMessage.numlist, ShellMessage.dummy = (0, 0, [], False)
+                    os.remove(self.path_nl)
+
+        def putter(self, aqueue, toput):
+            try:
+                aqueue.put_nowait(toput)
+            except Queue.Full:
+                pass
+
+        def execute(self):
+            self.manage()
+            ShellMessage.indx += 1
+
+        def print_logging_setup(self, logger, async_flag, formatter = logging.Formatter('%(name)s %(message)s')):
+            from pykms_GuiBase import gui_redirector
+            stream = gui_redirector(StringIO())
+            handler = logging.StreamHandler(stream)
+            handler.name = 'LogStream'
+            handler.setLevel(logging.INFO)
+            handler.setFormatter(formatter)
+
+            if logger.handlers:
+                logger.handlers = []
+
+            if async_flag:
+                from pykms_Misc import MultiProcessingLogHandler
+                logger.addHandler(MultiProcessingLogHandler('Thread-AsyncMsg{0}'.format(handler.name), handler = handler))
+            else:
+                logger.addHandler(handler)
+            logger.setLevel(logging.INFO)
+
+        def print_logging(self, toprint):
+            if (self.nshell and ((0 in self.nshell) or (2 in self.nshell and not ShellMessage.viewclt))) or ShellMessage.indx == 0:
+                from pykms_GuiBase import gui_redirector_setup, gui_redirector_clear
+                gui_redirector_setup()
+                gui_redirector_clear()
+                self.print_logging_setup(ShellMessage.loggersrv_pty, ShellMessage.asyncmsgsrv)
+                self.print_logging_setup(ShellMessage.loggerclt_pty, ShellMessage.asyncmsgclt)
+
+            if self.where == 'srv':
+                ShellMessage.loggersrv_pty.info(toprint)
+            elif self.where == 'clt':
+                ShellMessage.loggerclt_pty.info(toprint)
+
+        def notview(self):
+            if self.get_text:
+                self.newlines = 0
+                if self.put_text is not None:
+                    for msg in self.put_text:
+                        self.formatter(msg)
                 else:
+                    for num in self.nshell:
+                        self.formatter(MsgMap[num])
+                self.putter(self.queue_get, self.plaintext)
+
+        def manage(self):
+            if not ShellMessage.viewsrv:
+                # viewsrv = False, viewclt = True.
+                if ShellMessage.viewclt:
+                    if self.where == 'srv':
+                        self.notview()
+                        return
+                else:
+                    # viewsrv = False, viewclt = False.
+                    self.notview()
                     return
+            else:
+                # viewsrv = True, viewclt = False.
+                if not ShellMessage.viewclt:
+                    if self.where == 'clt':
+                        self.notview()
+                        return
+                else:
+                    # viewsrv = True, viewclt = True.
+                    pass
+
             # Do job.
             self.produce()
-            toprint = self.consume(timeout = 0.1)
-            # Redirect output.
+            toprint = self.consume(queue_print, timeout = 0.1)
+
             if sys.stdout.isatty():
-                print(toprint)
+                print(toprint, flush = True)
             else:
                 try:
-                    # Import after variables creation.
-                    from pykms_GuiBase import gui_redirect
-                    gui_redirect(toprint, self.where)
+                    self.print_logging(toprint)
                 except:
-                    print(toprint)
+                    print(toprint, flush = True)
+
             # Get string/s printed.
             if self.get_text:
-                return self.plaintext
+                self.putter(self.queue_get, self.plaintext)
+                return
 
         def produce(self):
             # Save everything that would otherwise go to stdout.
@@ -314,11 +366,14 @@ class ShellMessage(object):
                     for msg in self.put_text:
                         ShellMessage.count += msg.count('\n')
                         # Append a dummy element.
-                        ShellMessage.numlist.append('put')
+                        if ShellMessage.dummy:
+                            ShellMessage.numlist.append('put')
                         self.formatter(msg)
                         print(self.msgfrmt, end = '\n', flush = True)
                 else:
                     for num in self.nshell:
+                        if num == 0:
+                            ShellMessage.dummy = True
                         self.newlines_count(num)
                         self.formatter(MsgMap[num])
                         print(self.msgfrmt, end = '\n', flush = True)
@@ -327,15 +382,12 @@ class ShellMessage(object):
             finally:
                 # Restore stdout and send content.
                 sys.stdout = sys.__stdout__
-                try:
-                    self.print_queue.put(outstream.getvalue())
-                except Queue.Full:
-                    pass
+                self.putter(queue_print, outstream.getvalue())
 
-        def consume(self, timeout = None):
+        def consume(self, aqueue, timeout = None):
             try:
-                toprint = self.print_queue.get(block = timeout is not None, timeout = timeout)
-                self.print_queue.task_done()
+                toprint = aqueue.get(block = timeout is not None, timeout = timeout)
+                aqueue.task_done()
                 return toprint
             except Queue.Empty:
                 return None
@@ -381,11 +433,13 @@ def pretty_printer(**kwargs):
                 options['get_text'] = False
 
         # Process messages.
-        plain_messages = ShellMessage.Process(options['num_text'],
-                                              get_text = options['get_text'],
-                                              put_text = options['put_text'],
-                                              where = options['where']).run()
+        shmsg = ShellMessage.Process(options['num_text'],
+                                     get_text = options['get_text'],
+                                     put_text = options['put_text'],
+                                     where = options['where'])
 
+        shmsg.execute()
+        plain_messages = shmsg.consume(shmsg.queue_get, timeout = None)
         if options['log_obj']:
                 for plain_message in plain_messages:
                         options['log_obj'](plain_message)

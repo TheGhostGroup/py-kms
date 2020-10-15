@@ -1,28 +1,3 @@
-# History
-_py-kms_ is a port of node-kms created by [cyrozap](http://forums.mydigitallife.info/members/183074-markedsword), which is a port of either the C#, C++, or .NET implementations of KMS Emulator. The original version was written by [CODYQX4](http://forums.mydigitallife.info/members/89933-CODYQX4) and is derived from the reverse-engineered code of Microsoft's official KMS.
- 
-# Features
-- Responds to V4, V5, and V6 KMS requests.
-- Supports activating:
-	- Windows Vista 
-	- Windows 7 
-	- Windows 8
-	- Windows 8.1
-	- Windows 10 ( 1511 / 1607 / 1703 / 1709 / 1803 / 1809 )
-	- Windows Server 2008
-	- Windows Server 2008 R2
-	- Windows Server 2012
-	- Windows Server 2012 R2
-	- Windows Server 2016
-	- Windows Server 2019
-	- Microsoft Office 2010 ( Volume License )
-	- Microsoft Office 2013 ( Volume License )
-	- Microsoft Office 2016 ( Volume License )
-	- Microsoft Office 2019 ( Volume License )
-- It's written in Python:
-    - tested with Python 2.7.15rc1
-    - tested with Python 3.6.7
-
 # Usage
 ```
 docker run -it -d --name py3-kms \
@@ -34,15 +9,42 @@ docker run -it -d --name py3-kms \
     -e HWID=RANDOM \
     -e LOGLEVEL=INFO \
     -e LOGSIZE=2 \
-    -e LOGFILE=/var/log/py3-kms.log \
+    -e LOGFILE=/var/log/pykms_logserver.log \
     -v /etc/localtime:/etc/localtime:ro \
     -v /var/log:/var/log:rw \
-    --restart unless-stopped ekonprof18/pykms:py3-kms
+    --restart unless-stopped pykmsorg/py-kms:[TAG]
+```
+_Make sure to insert at `[TAG]` your wanted edition! The default is `latest`, which does not include SQLite support. For all available tag check [this](https://hub.docker.com/r/pykmsorg/py-kms/tags)._
+Therefore you can omit the `-e SQLITE=...` and `-p 8080:8080` option if you plan to use the `minimal` or `latest` image.
+
+## Docker-compose
+
+You can use docker-compose instead of Dockerfile. The following compose file will deploy `latest` image into your local directory.
+
+```
+version: '3'
+
+services:
+  kms:
+    image: pykmsorg/py-kms:latest
+    ports:
+      - 1688:1688
+    environment:
+      - IP=0.0.0.0
+      - SQLITE=true
+      - HWID=RANDOM
+      - LOGLEVEL=INFO
+      - LOGSIZE=2
+      - LOGFILE=/var/log/pykms_logserver.log
+    restart: always
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - ./:/var/log:rw
 ```
 
 # Sqlite-web
 A web-based SQLite database browser written in Python.
-Start on http://example.com:8080/ in read-only mode for clients.db.
+Start on http://example.com:8080/ in read-only mode for _pykms_database.db_.
 
 # Options
 ```
@@ -110,11 +112,5 @@ ENV LOGFILE		/var/log/pykms_logserver.log
 # EN: log file size in MB
 # RU: Максимальный размер Лог-файл в мегабайтах
 ENV LOGSIZE             ""
-# Use this flag to set a maximum size (in MB) to the output log file. Desactivated by default.
+# Use this flag to set a maximum size (in MB) to the output log file. Deactivated by default.
 ```
-
-# Other Important Stuff
-Consult the [Wiki](https://github.com/SystemRage/py-kms/wiki) for more informations about activation with _py-kms_ and to get GVLK keys.
-
-# License
-   [![License](https://img.shields.io/badge/license-unlicense-lightgray.svg)](https://github.com/SystemRage/py-kms/blob/master/LICENSE)
